@@ -1,0 +1,232 @@
+{
+  "generated_at": "2026-08-12T20:03:27.250211+00:00",
+  "target": "SIGNIFICANT",
+  "rows_before_ff_filter": 1589,
+  "rows_after_ff_filter": 1496,
+  "base_rate": 0.68048128342246,
+  "majority_baseline": 0.68048128342246,
+  "leakage_excluded": [
+    "FATAL",
+    "INJURE",
+    "FF",
+    "SERIOUS",
+    "TOTAL_COST",
+    "TOTAL_COST_IN84",
+    "TOTAL_COST_CURRENT",
+    "EST_COST_OPER_PAID",
+    "EST_COST_OPER_PAID_CURRENT",
+    "EST_COST_PROP_DAMAGE",
+    "EST_COST_PROP_DAMAGE_CURRENT",
+    "EST_COST_EMERGENCY",
+    "EST_COST_EMERGENCY_CURRENT",
+    "EST_COST_OTHER",
+    "EST_COST_OTHER_CURRENT",
+    "EST_COST_OTHER_DETAILS",
+    "EST_COST_UNINTENTIONAL_RELEASE",
+    "EST_COST_UNINTENT_REL_CURRENT",
+    "EST_COST_INTENTIONAL_RELEASE",
+    "EST_COST_INTENT_REL_CURRENT"
+  ],
+  "smote_applied": false,
+  "smote_rationale": "Class split is close to balanced for SIGNIFICANT, so synthetic over-sampling was evaluated and rejected on the evidence of the observed distribution rather than applied by default.",
+  "feature_sets": {
+    "A": {
+      "claim": "prevention",
+      "description": "Circumstances only - cause, component, location, pressure, diameter.",
+      "categorical": [
+        "MAP_EIGHT_CAUSE",
+        "SYSTEM_PART_INVOLVED",
+        "LOCATION_TYPE"
+      ],
+      "numeric": [
+        "ACCIDENT_PSIG",
+        "PIPE_DIAMETER"
+      ],
+      "best_model": "Random Forest",
+      "threshold": 0.5183049679809612,
+      "threshold_policy": "highest cut-off with out-of-fold recall >= 0.9",
+      "threshold_precision": 0.6920754716981132,
+      "threshold_recall": 0.9007858546168959,
+      "confusion_matrix": [
+        [
+          70,
+          408
+        ],
+        [
+          101,
+          917
+        ]
+      ],
+      "metrics": {
+        "Logistic Regression": {
+          "accuracy": {
+            "mean": 0.675799331103679,
+            "std": 0.006471709313829941
+          },
+          "precision": {
+            "mean": 0.6801893611665695,
+            "std": 0.0023683528877979565
+          },
+          "recall": {
+            "mean": 0.9882208055636047,
+            "std": 0.0090860729855951
+          },
+          "f1": {
+            "mean": 0.8057576094550093,
+            "std": 0.004149843993766856
+          },
+          "prc_auc": {
+            "mean": 0.7349167866423064,
+            "std": 0.024300786650959822
+          }
+        },
+        "Random Forest": {
+          "accuracy": {
+            "mean": 0.6604102564102564,
+            "std": 0.016523310345237182
+          },
+          "precision": {
+            "mean": 0.688921812499728,
+            "std": 0.0074954067563037866
+          },
+          "recall": {
+            "mean": 0.9135226504394861,
+            "std": 0.03389900378433802
+          },
+          "f1": {
+            "mean": 0.7852146508434749,
+            "std": 0.013833395667702655
+          },
+          "prc_auc": {
+            "mean": 0.745609362789873,
+            "std": 0.017159056756054832
+          }
+        },
+        "SVM (RBF)": {
+          "accuracy": {
+            "mean": 0.6818216276477147,
+            "std": 0.005120364322385985
+          },
+          "precision": {
+            "mean": 0.6833734701271,
+            "std": 0.0034729326875798214
+          },
+          "recall": {
+            "mean": 0.9921472037090698,
+            "std": 0.0023896306773022267
+          },
+          "f1": {
+            "mean": 0.8093031866151852,
+            "std": 0.0025942295217625936
+          },
+          "prc_auc": {
+            "mean": 0.6946192979361545,
+            "std": 0.03723338187987127
+          }
+        }
+      }
+    },
+    "B": {
+      "claim": "triage",
+      "description": "Set A plus ignition, explosion, material, release type, area, pipe age.",
+      "categorical": [
+        "MAP_EIGHT_CAUSE",
+        "SYSTEM_PART_INVOLVED",
+        "LOCATION_TYPE",
+        "IGNITE_IND",
+        "EXPLODE_IND",
+        "MATERIAL_INVOLVED",
+        "RELEASE_TYPE",
+        "INCIDENT_AREA_TYPE"
+      ],
+      "numeric": [
+        "ACCIDENT_PSIG",
+        "PIPE_DIAMETER",
+        "PIPE_AGE"
+      ],
+      "best_model": "Logistic Regression",
+      "threshold": 0.4824258409414383,
+      "threshold_policy": "highest cut-off with out-of-fold recall >= 0.9",
+      "threshold_precision": 0.7300955414012739,
+      "threshold_recall": 0.9007858546168959,
+      "confusion_matrix": [
+        [
+          139,
+          339
+        ],
+        [
+          101,
+          917
+        ]
+      ],
+      "metrics": {
+        "Logistic Regression": {
+          "accuracy": {
+            "mean": 0.7085529542920848,
+            "std": 0.01031421450335862
+          },
+          "precision": {
+            "mean": 0.7370656540791061,
+            "std": 0.0030973190609532705
+          },
+          "recall": {
+            "mean": 0.8890369941079881,
+            "std": 0.028747177688508818
+          },
+          "f1": {
+            "mean": 0.8056885365176216,
+            "std": 0.010451344854256027
+          },
+          "prc_auc": {
+            "mean": 0.8112020560804586,
+            "std": 0.014608204060767153
+          }
+        },
+        "Random Forest": {
+          "accuracy": {
+            "mean": 0.6958439241917503,
+            "std": 0.009800233831157
+          },
+          "precision": {
+            "mean": 0.7177809574052645,
+            "std": 0.0035508705891662104
+          },
+          "recall": {
+            "mean": 0.9115908432338452,
+            "std": 0.02648959328933816
+          },
+          "f1": {
+            "mean": 0.8029577076541553,
+            "std": 0.00926534339806071
+          },
+          "prc_auc": {
+            "mean": 0.8109562901338938,
+            "std": 0.021338327396365077
+          }
+        },
+        "SVM (RBF)": {
+          "accuracy": {
+            "mean": 0.7125797101449275,
+            "std": 0.017848081429269094
+          },
+          "precision": {
+            "mean": 0.7301506392819098,
+            "std": 0.008431124900258796
+          },
+          "recall": {
+            "mean": 0.9165507582343281,
+            "std": 0.03316289182724965
+          },
+          "f1": {
+            "mean": 0.8125044248429429,
+            "std": 0.01442876279470369
+          },
+          "prc_auc": {
+            "mean": 0.7800787059389324,
+            "std": 0.013944927657502337
+          }
+        }
+      }
+    }
+  }
+}

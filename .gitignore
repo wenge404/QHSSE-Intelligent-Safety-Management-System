@@ -17,6 +17,10 @@ out/
 build/
 next-env.d.ts
 
+# ---- TypeScript build output ----
+dist/
+*.tsbuildinfo
+
 # ---- Python ----
 __pycache__/
 *.py[cod]
@@ -41,6 +45,13 @@ ml-service/models/*
 *.joblib
 *.onnx
 
+# The evaluation report and figures ARE committed — they are the evidence
+# behind docs/ml-evaluation.md and are small. Regenerate with
+# `python train.py` from ml-service/.
+!ml-service/reports/
+!ml-service/reports/*.json
+!ml-service/reports/*.png
+
 # ---- Editor / OS ----
 .vscode/
 .idea/
@@ -51,3 +62,6 @@ Thumbs.db
 logs/
 *.log
 coverage/
+
+# ---- Claude Code local settings ----
+.claude/

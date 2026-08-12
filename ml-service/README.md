@@ -1,41 +1,65 @@
-# IQSMS ML Service
+# IQSMS ML service
 
-Risk-classification microservice. Trains on the public PHMSA gas-pipeline incident dataset and serves severity predictions to the backend.
+Predictive risk classification for gas distribution incidents. Trained on the public PHMSA gas
+distribution flagged file (2010–present, Form 7100.1) against PHMSA's own `SIGNIFICANT` incident
+classification, and served to the backend over FastAPI.
+
+## Setup
+
+```bash
+python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
+```
+
+Place the PHMSA dataset at `data/gd2010toPresent.xlsx` — it is gitignored, so download it from
+<https://www.phmsa.dot.gov/data-and-statistics> (Pipeline Incident Flagged Files → Gas
+Distribution, 2010 to present). Then train and serve:
+
+```bash
+.venv/Scripts/python train.py && .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+```
+
+On macOS/Linux replace `.venv/Scripts/python` with `.venv/bin/python`.
+
+Health check: <http://localhost:8000/health>
 
 ## Layout
 
 ```
-app/          FastAPI application
-notebooks/    EDA and model training notebooks
-data/         Raw + cleaned datasets (gitignored)
-models/       Serialized models (gitignored)
+app/
+  main.py       FastAPI service — /health, /api/v1/predict, /api/v1/models
+  features.py   feature sets, leakage exclusions, IQSMS→PHMSA vocabulary
+  pipeline.py   dataset loading and the sklearn pipeline
+train.py        reproducible training, cross-validation and reporting
+data/           PHMSA source files (gitignored)
+models/         serialised pipelines (gitignored)
+reports/        model_comparison.json and figures — committed as evidence
+notebooks/      exploratory work
 ```
 
-## Run
-
-```bash
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-Check it's alive: `curl http://localhost:8000/health`
-Interactive API docs: http://localhost:8000/docs
+`app/features.py` is imported by both `train.py` and `app/main.py`. That shared import is what
+stops the training vocabulary and the serving vocabulary drifting apart.
 
 ## Endpoints
 
-| Method | Path | Status |
-|---|---|---|
-| GET | `/health` | Working |
-| POST | `/api/v1/predict` | Contract defined, returns 503 until a model is trained |
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Which models are loaded |
+| `GET /api/v1/models` | The full cross-validated comparison, as JSON |
+| `POST /api/v1/predict` | Score one incident; `featureSet` selects A or B, default B |
 
-## Phase 4 order of work
+## What the model claims
 
-1. Download the PHMSA incident data into `data/` and profile it.
-2. Build the severity index (damage cost, injuries/fatalities, gas released) and pick the classification cutoff **from the observed distribution** — do not reuse PHMSA's own reportability thresholds, since every record in the dataset already clears them and the resulting label would barely separate the classes.
-3. Confirm the real class split, then choose SMOTE, class-weighting, or both.
-4. Train Logistic Regression, Random Forest, and SVM. Keep every result — the losing models are the comparison table in your report.
-5. Evaluate on accuracy, precision, recall, F1, confusion matrix, and PRC-AUC.
-6. Save the winning estimator **and its fitted preprocessor** to `models/`, then implement the inference path in `app/main.py`.
-7. Smoke-test the endpoint standalone before wiring it into the backend.
+**Severity triage, not prevention.** It estimates whether an incident that has already occurred
+meets PHMSA's `SIGNIFICANT` threshold, so investigation can be prioritised. It does not forecast
+which pipeline segment will fail next.
+
+| Set | Features | PRC-AUC | Status |
+| --- | --- | --- | --- |
+| A | cause, component, location, pressure, diameter | 0.746 | Null result — accuracy at the 0.680 majority baseline |
+| B | A + ignition, explosion, material, release type, area, pipe age | 0.811 | Served |
+
+`SIGNIFICANT` is computed from fatality count, injury count, 1984-dollar cost and the fire-first
+indicator; all twenty such columns are excluded as leakage. An accuracy above ~0.95 on this
+problem is a symptom of leakage, not success.
+
+Full method: [`docs/ml-evaluation.md`](../docs/ml-evaluation.md).

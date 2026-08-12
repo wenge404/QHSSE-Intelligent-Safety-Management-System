@@ -1,37 +1,37 @@
 // ============================================================================
-// Intelligent QHSSE Safety Management System — Database Schema
-// GDC Internship Defense Project
+// Intelligent QHSSE Safety Management System (IQSMS) — Database Schema
+// Gaz du Cameroun / University of Buea internship defense project
 // ============================================================================
 // Design notes:
 //
-// 1. KPIs (LTIFR, TRIR, audit closure rate, near-miss counts, etc.) are
-//    deliberately NOT stored as their own tables. They're computed with
-//    aggregate queries over Incident / Audit / CorrectiveAction so the
-//    dashboard is never showing stale numbers.
+// 1. KPIs (CACR, MTTC, NMFR) are deliberately NOT stored as their own tables.
+//    They are computed with aggregate queries over Incident / Audit /
+//    CorrectiveAction so the dashboard is never showing stale numbers.
+//    See proposal §11.
 //
-// 2. CorrectiveAction and Attachment can originate from either an Incident
-//    or an AuditResponse. Prisma has no native polymorphic relation, so
-//    this uses the standard workaround: a `source` enum plus two optional
-//    foreign keys. Enforce "exactly one FK set" in the API layer (e.g. a
-//    Zod refinement or a Postgres CHECK constraint added via a manual
-//    migration).
+// 2. CorrectiveAction and Attachment can originate from either an Incident or
+//    an AuditResponse. Prisma has no native polymorphic relation, so this uses
+//    the standard workaround: a `source` enum plus two optional foreign keys.
+//    "Exactly one FK set" is enforced in the API layer (Zod refinement in
+//    src/schemas/correctiveAction.ts).
 //
 // 3. Checklists use a template/instance split: ChecklistTemplate +
-//    ChecklistItem are the reusable definition (e.g. "Monthly Fire Safety
+//    ChecklistItem are the reusable definition ("Monthly Fire Safety
 //    Inspection"), Audit is one dated run of a template at a Zone, and
-//    AuditResponse is the recorded answer to each item for that run. This
-//    is what makes the checklist app "digital" instead of just a form.
+//    AuditResponse is the recorded answer to each item for that run.
 //
-// 4. Incident.causeCategory follows the 8-category apparent-cause
-//    taxonomy from PHMSA Form F 7100.1 (Gas Distribution Incident Report),
-//    Part G — reused here since it's a proven, industry-real classification
-//    scheme and lines up with the predictive module's training data.
+// 4. Incident.causeCategory follows the 8-category apparent-cause taxonomy
+//    from PHMSA Form F 7100.1 Part G, matching MAP_EIGHT_CAUSE in the
+//    training data so logged incidents and training records share one
+//    cause vocabulary. See proposal §10.2.
 //
-// 5. predictedRiskLevel / predictedRiskScore / predictedByModel hold the
-//    live prediction from whichever model you select as "best" after
-//    comparing Logistic Regression, Random Forest, and SVM. The actual
-//    model comparison (accuracy/precision/recall/F1) happens on the
-//    Python/training side, not in this database.
+// 5. Role names and the incident state machine follow the proposal
+//    (§9.2, §9.3) rather than any earlier draft schema: four roles, and the
+//    six-state lifecycle DRAFT → SUBMITTED → UNDER_INVESTIGATION →
+//    CORRECTIVE_ACTION_PENDING → VERIFIED → CLOSED.
+//
+// 6. AuditLog is insert-only at the application layer — no update or delete
+//    path is exposed through the API. See proposal §9.4.
 // ============================================================================
 
 generator client {
@@ -45,13 +45,12 @@ datasource db {
 
 // ------------------------------ Enums --------------------------------------
 
-/// Matches the RBAC matrix in the project proposal (Section 9.3).
-/// ADMIN = "System Admin" in the proposal's prose.
+/// Proposal §9.3 RBAC matrix.
 enum Role {
-  ADMIN
-  QHSSE_AUDITOR
   FIELD_REPORTER
+  QHSSE_AUDITOR
   DEPARTMENT_LEAD
+  SYSTEM_ADMIN
 }
 
 enum ZoneType {
@@ -68,7 +67,7 @@ enum IncidentType {
   NEAR_MISS
 }
 
-/// PHMSA F 7100.1, Part G apparent-cause categories (G1–G8)
+/// PHMSA F 7100.1 Part G apparent-cause categories (G1–G8).
 enum CauseCategory {
   CORROSION_FAILURE
   NATURAL_FORCE_DAMAGE
@@ -87,10 +86,14 @@ enum RiskLevel {
   CRITICAL
 }
 
+/// Proposal §9.2 workflow state machine. Valid transitions are declared in
+/// src/domain/stateMachine.ts and enforced by the API before any write.
 enum IncidentStatus {
-  REPORTED
+  DRAFT
+  SUBMITTED
   UNDER_INVESTIGATION
   CORRECTIVE_ACTION_PENDING
+  VERIFIED
   CLOSED
 }
 
@@ -121,7 +124,61 @@ enum CorrectiveActionStatus {
   VERIFIED
 }
 
-// ------------------------------ Models --------------------------------------
+// The five enums below are deliberately 1:1 with the distinct values actually
+// present in gd2010toPresent.xlsx, verified against the file rather than
+// assumed. A lossy platform→PHMSA lookup would silently push unmapped options
+// into an unseen category that OneHotEncoder drops at inference time, so the
+// vocabulary is kept identical on both sides instead.
+
+/// PHMSA LOCATION_TYPE — a set-A model feature.
+enum LocationType {
+  PRIVATE_PROPERTY
+  PUBLIC_PROPERTY
+  UTILITY_ROW_EASEMENT
+  OPERATOR_CONTROLLED_PROPERTY
+}
+
+/// PHMSA SYSTEM_PART_INVOLVED — a set-A model feature.
+enum SystemPart {
+  MAIN
+  SERVICE
+  SERVICE_RISER
+  SERVICE_VALVE
+  MAIN_VALVE
+  OUTSIDE_METER_REGULATOR_SET
+  INSIDE_METER_REGULATOR_SET
+  DISTRICT_REGULATOR_METERING_STATION
+  FARM_TAP_METER_REGULATOR_SET
+  OTHER
+}
+
+/// PHMSA RELEASE_TYPE — a set-B (triage) feature.
+enum ReleaseType {
+  LEAK
+  RUPTURE
+  MECHANICAL_PUNCTURE
+  OTHER
+}
+
+/// PHMSA INCIDENT_AREA_TYPE — a set-B (triage) feature.
+enum IncidentAreaType {
+  UNDERGROUND
+  ABOVEGROUND
+  TRANSITION_AREA
+}
+
+/// PHMSA MATERIAL_INVOLVED — a set-B (triage) feature.
+enum PipeMaterial {
+  STEEL
+  PLASTIC
+  CAST_WROUGHT_IRON
+  DUCTILE_IRON
+  COPPER
+  UNKNOWN
+  OTHER
+}
+
+// ------------------------------ Models -------------------------------------
 
 model User {
   id           Int      @id @default(autoincrement())
@@ -129,7 +186,11 @@ model User {
   passwordHash String
   fullName     String
   role         Role     @default(FIELD_REPORTER)
+  /// Scope key for DEPARTMENT_LEAD visibility (proposal §9.3).
   department   String?
+  /// Scope key for QHSSE_AUDITOR zone-level visibility (proposal §9.3).
+  zoneId       Int?
+  zone         Zone?    @relation("UserHomeZone", fields: [zoneId], references: [id])
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -140,17 +201,22 @@ model User {
   verifiedActions   CorrectiveAction[] @relation("ActionVerifiedBy")
   auditLogEntries   AuditLog[]
 
+  @@index([role])
   @@map("users")
 }
 
 model Zone {
   id       Int      @id @default(autoincrement())
-  name     String
+  name     String   @unique
   zoneType ZoneType
+  /// Owning department — the scope key for DEPARTMENT_LEAD visibility.
+  department String?
   notes    String?
 
-  incidents Incident[]
-  audits    Audit[]
+  incidents  Incident[]
+  audits     Audit[]
+  residents  User[]     @relation("UserHomeZone")
+  hourLogs   OperationalHours[]
 
   @@map("zones")
 }
@@ -170,11 +236,29 @@ model Incident {
   zoneId Int?
   zone   Zone? @relation(fields: [zoneId], references: [id])
 
-  // Cause — see CauseCategory enum (PHMSA-aligned)
+  // --- Cause (PHMSA-aligned, see design note 4) ---
   causeCategory    CauseCategory?
   causeDescription String?
 
-  // Consequence / severity
+  // --- Set A features: circumstances knowable before an incident ---
+  systemPart       SystemPart?
+  locationType     LocationType?
+  /// PHMSA ACCIDENT_PSIG. Note: PHMSA's ACCIDENT_PRESSURE is a categorical
+  /// MAOP-exceedance field despite its name, and is not the numeric pressure.
+  linePressurePsig    Decimal? @db.Decimal(8, 2)
+  /// PHMSA PIPE_DIAMETER, nominal inches.
+  pipeDiameterInches  Decimal? @db.Decimal(6, 2)
+
+  // --- Set B features: incident characteristics, known once logged ---
+  ignitionOccurred Boolean?
+  explosionOccurred Boolean?
+  pipeMaterial     PipeMaterial?
+  releaseType      ReleaseType?
+  incidentAreaType IncidentAreaType?
+  /// Derived to PIPE_AGE at scoring time: occurredAt.year - yearInstalled.
+  yearInstalled    Int?
+
+  // --- Consequence / severity (never sent to the model: leakage, §8.2) ---
   severity             RiskLevel @default(LOW)
   fatalities           Int       @default(0)
   injuries             Int       @default(0)
@@ -182,19 +266,18 @@ model Incident {
   gasVolumeReleasedMcf Decimal?  @db.Decimal(10, 2)
   evacuationCount      Int       @default(0)
 
-  // Asset details
+  // --- Asset context ---
   assetType        String?
-  pipeMaterial     String?
-  yearInstalled    Int?
   scadaPresent     Boolean?
   scadaOperational Boolean?
 
-  status IncidentStatus @default(REPORTED)
+  status IncidentStatus @default(DRAFT)
 
-  // Predictive module output (see design note 5 above)
+  // --- Predictive module output (design note 5) ---
   predictedRiskLevel RiskLevel?
   predictedRiskScore Decimal?   @db.Decimal(5, 4)
   predictedByModel   String?
+  predictedAt        DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -205,14 +288,19 @@ model Incident {
   @@index([status])
   @@index([causeCategory])
   @@index([occurredAt])
+  @@index([type])
+  @@index([reportedById])
+  @@index([zoneId])
   @@map("incidents")
 }
 
 model ChecklistTemplate {
   id          Int      @id @default(autoincrement())
-  name        String
+  name        String   @unique
   description String?
   category    String?
+  /// ISO clause this template evidences, e.g. "ISO 9001:2015 §9.2".
+  isoClause   String?
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
 
@@ -225,13 +313,14 @@ model ChecklistTemplate {
 model ChecklistItem {
   id         Int               @id @default(autoincrement())
   templateId Int
-  template   ChecklistTemplate @relation(fields: [templateId], references: [id])
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   itemText   String
   category   String?
   orderIndex Int               @default(0)
 
   responses AuditResponse[]
 
+  @@index([templateId])
   @@map("checklist_items")
 }
 
@@ -257,13 +346,15 @@ model Audit {
   responses AuditResponse[]
 
   @@index([status])
+  @@index([zoneId])
+  @@index([conductedById])
   @@map("audits")
 }
 
 model AuditResponse {
   id               Int              @id @default(autoincrement())
   auditId          Int
-  audit            Audit            @relation(fields: [auditId], references: [id])
+  audit            Audit            @relation(fields: [auditId], references: [id], onDelete: Cascade)
   checklistItemId  Int
   checklistItem    ChecklistItem    @relation(fields: [checklistItemId], references: [id])
   complianceStatus ComplianceStatus
@@ -283,63 +374,79 @@ model CorrectiveAction {
 
   source          CorrectiveActionSource
   incidentId      Int?
-  incident        Incident?              @relation(fields: [incidentId], references: [id])
+  incident        Incident?              @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   auditResponseId Int?
-  auditResponse   AuditResponse?         @relation(fields: [auditResponseId], references: [id])
+  auditResponse   AuditResponse?         @relation(fields: [auditResponseId], references: [id], onDelete: Cascade)
 
   assignedToId Int
   assignedTo   User @relation("ActionAssignedTo", fields: [assignedToId], references: [id])
 
+  /// Set when the action is created — the "raised" timestamp for MTTC (§11).
+  raisedAt      DateTime @default(now())
   dueDate       DateTime
   completedDate DateTime?
   status        CorrectiveActionStatus @default(OPEN)
 
   verifiedById Int?
-  verifiedBy   User? @relation("ActionVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedBy   User?     @relation("ActionVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt   DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([dueDate])
+  @@index([assignedToId])
   @@map("corrective_actions")
 }
 
 model Attachment {
-  id              Int      @id @default(autoincrement())
+  id              Int            @id @default(autoincrement())
   fileUrl         String
+  fileName        String?
   fileType        String?
   incidentId      Int?
-  incident        Incident?      @relation(fields: [incidentId], references: [id])
+  incident        Incident?      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   auditResponseId Int?
-  auditResponse   AuditResponse? @relation(fields: [auditResponseId], references: [id])
-  uploadedAt      DateTime @default(now())
+  auditResponse   AuditResponse? @relation(fields: [auditResponseId], references: [id], onDelete: Cascade)
+  uploadedAt      DateTime       @default(now())
 
   @@map("attachments")
 }
 
-/// Insert-only audit trail (proposal Section 9.4).
-/// Every state mutation across the platform is recorded here. The API must
-/// expose NO update or delete route for this table — that "insert-only"
-/// property is what makes it usable as ISO-aligned evidence, and it is
-/// enforced by convention at the application layer, so keep it that way.
-///
-/// entityType/entityId are a loose (non-FK) reference on purpose: this table
-/// has to be able to log any entity without a schema change, and rows must
-/// survive the deletion of whatever they describe.
+/// Insert-only compliance trail (proposal §9.4). Every state mutation across
+/// the platform is appended here. The API exposes no update or delete route.
 model AuditLog {
   id            Int      @id @default(autoincrement())
-  userId        Int
-  user          User     @relation(fields: [userId], references: [id])
+  userId        Int?
+  user          User?    @relation(fields: [userId], references: [id])
   action        String
   entityType    String
   entityId      Int
   previousState String?
   newState      String?
+  /// Free-form JSON detail (changed fields, request context).
+  detail        Json?
+  ipAddress     String?
   timestamp     DateTime @default(now())
 
   @@index([entityType, entityId])
-  @@index([userId])
   @@index([timestamp])
-  @@map("audit_logs")
+  @@index([userId])
+  @@map("audit_log")
+}
+
+/// Denominator for the Near-Miss Frequency Rate (proposal §11):
+/// NMFR = (near-misses / person-hours) x 200,000.
+model OperationalHours {
+  id          Int      @id @default(autoincrement())
+  periodStart DateTime
+  periodEnd   DateTime
+  personHours Decimal  @db.Decimal(12, 2)
+  zoneId      Int?
+  zone        Zone?    @relation(fields: [zoneId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([periodStart, periodEnd])
+  @@map("operational_hours")
 }

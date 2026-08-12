@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: iqsms-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: iqsms
+      # Local development default. This repository is public, so nothing here is
+      # a real credential — the container is bound to localhost only. Override
+      # by exporting POSTGRES_PASSWORD or putting it in a root .env file, and
+      # keep backend/.env in step.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: iqsms
+    # Host port 5433 to avoid clashing with a locally installed PostgreSQL on 5432.
+    ports:
+      - "5433:5432"
+    volumes:
+      - iqsms_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U iqsms -d iqsms"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  iqsms_pgdata:
