@@ -1,0 +1,345 @@
+// ============================================================================
+// Intelligent QHSSE Safety Management System — Database Schema
+// GDC Internship Defense Project
+// ============================================================================
+// Design notes:
+//
+// 1. KPIs (LTIFR, TRIR, audit closure rate, near-miss counts, etc.) are
+//    deliberately NOT stored as their own tables. They're computed with
+//    aggregate queries over Incident / Audit / CorrectiveAction so the
+//    dashboard is never showing stale numbers.
+//
+// 2. CorrectiveAction and Attachment can originate from either an Incident
+//    or an AuditResponse. Prisma has no native polymorphic relation, so
+//    this uses the standard workaround: a `source` enum plus two optional
+//    foreign keys. Enforce "exactly one FK set" in the API layer (e.g. a
+//    Zod refinement or a Postgres CHECK constraint added via a manual
+//    migration).
+//
+// 3. Checklists use a template/instance split: ChecklistTemplate +
+//    ChecklistItem are the reusable definition (e.g. "Monthly Fire Safety
+//    Inspection"), Audit is one dated run of a template at a Zone, and
+//    AuditResponse is the recorded answer to each item for that run. This
+//    is what makes the checklist app "digital" instead of just a form.
+//
+// 4. Incident.causeCategory follows the 8-category apparent-cause
+//    taxonomy from PHMSA Form F 7100.1 (Gas Distribution Incident Report),
+//    Part G — reused here since it's a proven, industry-real classification
+//    scheme and lines up with the predictive module's training data.
+//
+// 5. predictedRiskLevel / predictedRiskScore / predictedByModel hold the
+//    live prediction from whichever model you select as "best" after
+//    comparing Logistic Regression, Random Forest, and SVM. The actual
+//    model comparison (accuracy/precision/recall/F1) happens on the
+//    Python/training side, not in this database.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------ Enums --------------------------------------
+
+/// Matches the RBAC matrix in the project proposal (Section 9.3).
+/// ADMIN = "System Admin" in the proposal's prose.
+enum Role {
+  ADMIN
+  QHSSE_AUDITOR
+  FIELD_REPORTER
+  DEPARTMENT_LEAD
+}
+
+enum ZoneType {
+  WELLHEAD
+  PROCESSING_FACILITY
+  PIPELINE_SECTION
+  DISTRIBUTION_NETWORK
+  OFFICE
+  OTHER
+}
+
+enum IncidentType {
+  INCIDENT
+  NEAR_MISS
+}
+
+/// PHMSA F 7100.1, Part G apparent-cause categories (G1–G8)
+enum CauseCategory {
+  CORROSION_FAILURE
+  NATURAL_FORCE_DAMAGE
+  EXCAVATION_DAMAGE
+  OTHER_OUTSIDE_FORCE
+  PIPE_WELD_JOINT_FAILURE
+  EQUIPMENT_FAILURE
+  INCORRECT_OPERATION
+  OTHER_UNKNOWN
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  REPORTED
+  UNDER_INVESTIGATION
+  CORRECTIVE_ACTION_PENDING
+  CLOSED
+}
+
+enum AuditStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ComplianceStatus {
+  COMPLIANT
+  NON_COMPLIANT
+  NOT_APPLICABLE
+  OBSERVATION
+}
+
+enum CorrectiveActionSource {
+  INCIDENT
+  AUDIT_RESPONSE
+}
+
+enum CorrectiveActionStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  OVERDUE
+  VERIFIED
+}
+
+// ------------------------------ Models --------------------------------------
+
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  passwordHash String
+  fullName     String
+  role         Role     @default(FIELD_REPORTER)
+  department   String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  reportedIncidents Incident[]         @relation("IncidentReportedBy")
+  conductedAudits   Audit[]            @relation("AuditConductedBy")
+  assignedActions   CorrectiveAction[] @relation("ActionAssignedTo")
+  verifiedActions   CorrectiveAction[] @relation("ActionVerifiedBy")
+  auditLogEntries   AuditLog[]
+
+  @@map("users")
+}
+
+model Zone {
+  id       Int      @id @default(autoincrement())
+  name     String
+  zoneType ZoneType
+  notes    String?
+
+  incidents Incident[]
+  audits    Audit[]
+
+  @@map("zones")
+}
+
+model Incident {
+  id              Int          @id @default(autoincrement())
+  referenceNumber String       @unique
+  type            IncidentType @default(INCIDENT)
+  title           String
+  description     String
+
+  occurredAt   DateTime
+  reportedAt   DateTime @default(now())
+  reportedById Int
+  reportedBy   User     @relation("IncidentReportedBy", fields: [reportedById], references: [id])
+
+  zoneId Int?
+  zone   Zone? @relation(fields: [zoneId], references: [id])
+
+  // Cause — see CauseCategory enum (PHMSA-aligned)
+  causeCategory    CauseCategory?
+  causeDescription String?
+
+  // Consequence / severity
+  severity             RiskLevel @default(LOW)
+  fatalities           Int       @default(0)
+  injuries             Int       @default(0)
+  propertyDamageCost   Decimal?  @db.Decimal(12, 2)
+  gasVolumeReleasedMcf Decimal?  @db.Decimal(10, 2)
+  evacuationCount      Int       @default(0)
+
+  // Asset details
+  assetType        String?
+  pipeMaterial     String?
+  yearInstalled    Int?
+  scadaPresent     Boolean?
+  scadaOperational Boolean?
+
+  status IncidentStatus @default(REPORTED)
+
+  // Predictive module output (see design note 5 above)
+  predictedRiskLevel RiskLevel?
+  predictedRiskScore Decimal?   @db.Decimal(5, 4)
+  predictedByModel   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  correctiveActions CorrectiveAction[]
+  attachments       Attachment[]
+
+  @@index([status])
+  @@index([causeCategory])
+  @@index([occurredAt])
+  @@map("incidents")
+}
+
+model ChecklistTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  category    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  items  ChecklistItem[]
+  audits Audit[]
+
+  @@map("checklist_templates")
+}
+
+model ChecklistItem {
+  id         Int               @id @default(autoincrement())
+  templateId Int
+  template   ChecklistTemplate @relation(fields: [templateId], references: [id])
+  itemText   String
+  category   String?
+  orderIndex Int               @default(0)
+
+  responses AuditResponse[]
+
+  @@map("checklist_items")
+}
+
+model Audit {
+  id              Int               @id @default(autoincrement())
+  referenceNumber String            @unique
+  templateId      Int
+  template        ChecklistTemplate @relation(fields: [templateId], references: [id])
+
+  zoneId Int?
+  zone   Zone? @relation(fields: [zoneId], references: [id])
+
+  conductedById Int
+  conductedBy   User @relation("AuditConductedBy", fields: [conductedById], references: [id])
+
+  scheduledDate DateTime
+  conductedDate DateTime?
+  status        AuditStatus @default(PLANNED)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  responses AuditResponse[]
+
+  @@index([status])
+  @@map("audits")
+}
+
+model AuditResponse {
+  id               Int              @id @default(autoincrement())
+  auditId          Int
+  audit            Audit            @relation(fields: [auditId], references: [id])
+  checklistItemId  Int
+  checklistItem    ChecklistItem    @relation(fields: [checklistItemId], references: [id])
+  complianceStatus ComplianceStatus
+  notes            String?
+
+  correctiveActions CorrectiveAction[]
+  attachments       Attachment[]
+
+  @@unique([auditId, checklistItemId])
+  @@map("audit_responses")
+}
+
+model CorrectiveAction {
+  id              Int                    @id @default(autoincrement())
+  referenceNumber String                 @unique
+  description     String
+
+  source          CorrectiveActionSource
+  incidentId      Int?
+  incident        Incident?              @relation(fields: [incidentId], references: [id])
+  auditResponseId Int?
+  auditResponse   AuditResponse?         @relation(fields: [auditResponseId], references: [id])
+
+  assignedToId Int
+  assignedTo   User @relation("ActionAssignedTo", fields: [assignedToId], references: [id])
+
+  dueDate       DateTime
+  completedDate DateTime?
+  status        CorrectiveActionStatus @default(OPEN)
+
+  verifiedById Int?
+  verifiedBy   User? @relation("ActionVerifiedBy", fields: [verifiedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status])
+  @@index([dueDate])
+  @@map("corrective_actions")
+}
+
+model Attachment {
+  id              Int      @id @default(autoincrement())
+  fileUrl         String
+  fileType        String?
+  incidentId      Int?
+  incident        Incident?      @relation(fields: [incidentId], references: [id])
+  auditResponseId Int?
+  auditResponse   AuditResponse? @relation(fields: [auditResponseId], references: [id])
+  uploadedAt      DateTime @default(now())
+
+  @@map("attachments")
+}
+
+/// Insert-only audit trail (proposal Section 9.4).
+/// Every state mutation across the platform is recorded here. The API must
+/// expose NO update or delete route for this table — that "insert-only"
+/// property is what makes it usable as ISO-aligned evidence, and it is
+/// enforced by convention at the application layer, so keep it that way.
+///
+/// entityType/entityId are a loose (non-FK) reference on purpose: this table
+/// has to be able to log any entity without a schema change, and rows must
+/// survive the deletion of whatever they describe.
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id])
+  action        String
+  entityType    String
+  entityId      Int
+  previousState String?
+  newState      String?
+  timestamp     DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("audit_logs")
+}
