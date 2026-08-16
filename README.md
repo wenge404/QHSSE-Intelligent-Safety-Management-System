@@ -1,8 +1,6 @@
 # QHSSE Intelligent Safety Management System (IQSMS)
 
-A digital platform for incident tracking, audit management, and predictive risk classification, built for the QHSSE/IMS function at Gaz du Cameroun (GDC), Logbaba gas field, Douala.
-
-Computer Engineering internship defense project — University of Buea, Faculty of Engineering and Technology.
+A digital platform for incident tracking, audit management, and predictive risk classification.
 
 | Module | ISO standard & clause | Focus |
 | --- | --- | --- |
@@ -200,8 +198,3 @@ Set A is kept and reported as a documented baseline rather than quietly dropped.
 
 ---
 
-## Note on data
-
-This repository is **public**. It contains no confidential or proprietary GDC material — no internal incident records, audit reports, or IMS documents. The platform is demonstrated with synthetic operational data generated against GDC's Logbaba fields (gas plant, pipeline sections A–C, PRMS stations).
-
-The risk model is trained on the public **PHMSA Pipeline Incident Flagged Files**, gas distribution 2010–present (Form 7100.1) — 1,589 operator-submitted records, 1,496 after the fire-first exclusion. Source: <https://www.phmsa.dot.gov/data-and-statistics>. Raw datasets are gitignored (`ml-service/data/`) and are not committed.
